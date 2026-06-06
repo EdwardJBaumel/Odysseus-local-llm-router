@@ -1,0 +1,6 @@
+# Nested Odysseus clone — separate git repo (clone per README)
+odysseus/
+
+# Local secrets / runtime
+.env
+*.log
