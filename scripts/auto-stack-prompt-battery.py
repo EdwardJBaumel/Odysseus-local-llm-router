@@ -348,13 +348,14 @@ def create_auto_stack_session(endpoint: dict) -> str | None:
 
 
 def parse_sse(raw: str) -> list[dict]:
+    """Parse SSE payloads from a raw stream body (tolerates chunked reads)."""
     events: list[dict] = []
     for block in re.split(r"\n\n+", raw):
         if not block.strip() or block.strip().startswith(":"):
             continue
         data_line = None
         event_type = None
-        for line in block.splitlines():
+        for line in block.replace("\r", "").splitlines():
             if line.startswith("data: "):
                 data_line = line[6:]
             elif line.startswith("event: "):
@@ -376,6 +377,24 @@ def parse_sse(raw: str) -> list[dict]:
             elif event_type:
                 payload["type"] = event_type
         events.append(payload)
+
+    # Fallback: line-scanner for events split across readline() boundaries
+    if not any(e.get("type") == "model_info" for e in events):
+        for line in raw.replace("\r", "").splitlines():
+            if not line.startswith("data: "):
+                continue
+            data_line = line[6:].strip()
+            if data_line == "[DONE]":
+                events.append({"type": "done"})
+                continue
+            try:
+                payload = json.loads(data_line)
+            except json.JSONDecodeError:
+                continue
+            if "type" not in payload and "delta" in payload:
+                payload["type"] = "delta"
+            if payload not in events:
+                events.append(payload)
     return events
 
 
@@ -533,7 +552,16 @@ def run_layer_b(cases: list[PromptCase]) -> tuple[list[LayerBResult], dict[str, 
             continue
 
         # Routing-layer pass: got model_info with a real model before timeout/model-down
-        routing_ok = bool(summary["model_info"] and summary["model_info"].get("model"))
+        routing_ok = bool(
+            summary["model_info"]
+            and summary["model_info"].get("model")
+            and summary["model_info"].get("model") != "__auto_stack__"
+        )
+        if (
+            summary["model_info"]
+            and summary["model_info"].get("model") == "__auto_stack__"
+        ):
+            issues.append("model_info still shows sentinel __auto_stack__ (routing did not resolve)")
         if not routing_ok and summary.get("has_delta"):
             issues.append("stream had deltas but no model_info (check session isolation)")
         if not routing_ok and not summary.get("has_delta") and not transport_errors:
