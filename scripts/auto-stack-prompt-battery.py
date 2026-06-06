@@ -379,6 +379,13 @@ def parse_sse(raw: str) -> list[dict]:
     return events
 
 
+def stop_chat_run(session_id: str) -> None:
+    try:
+        _http_json(f"{ODYSSEUS_BASE}/api/chat/stop/{session_id}", method="POST", data={}, timeout=5)
+    except Exception:
+        pass
+
+
 def stream_chat(session_id: str, message: str, mode: str) -> tuple[list[dict], list[str]]:
     data = {
         "message": message,
@@ -398,15 +405,13 @@ def stream_chat(session_id: str, message: str, mode: str) -> tuple[list[dict], l
     chunks: list[str] = []
     errors: list[str] = []
     try:
-        with urllib.request.urlopen(req, timeout=STREAM_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=STREAM_TIMEOUT + 5) as resp:
             start = time.time()
-            while True:
+            while time.time() - start < STREAM_TIMEOUT:
                 line = resp.readline().decode("utf-8", errors="replace")
                 if not line:
                     break
                 chunks.append(line)
-                if time.time() - start > STREAM_TIMEOUT:
-                    break
                 if "data: [DONE]" in line:
                     break
     except urllib.error.HTTPError as exc:
@@ -449,21 +454,6 @@ def run_layer_b(cases: list[PromptCase]) -> tuple[list[LayerBResult], dict[str, 
             for c in cases
         ], meta
 
-    session_id = create_auto_stack_session(endpoint)
-    meta["session_id"] = session_id
-    if not session_id:
-        return [
-            LayerBResult(
-                id=c.id,
-                category=c.category,
-                mode=c.mode,
-                ok=False,
-                skipped=True,
-                skip_reason="Failed to create __auto_stack__ session",
-            )
-            for c in cases
-        ], meta
-
     # Subset: representative prompts per category + both modes
     subset_ids = {
         "s01", "s02", "m01", "m05", "c01", "sh01", "l01", "l02", "a01", "a03", "a04", "e01", "e02",
@@ -471,8 +461,24 @@ def run_layer_b(cases: list[PromptCase]) -> tuple[list[LayerBResult], dict[str, 
     subset = [c for c in cases if c.id in subset_ids]
 
     results: list[LayerBResult] = []
+    meta["session_ids"] = []
     for case in subset:
+        session_id = create_auto_stack_session(endpoint)
+        if not session_id:
+            results.append(
+                LayerBResult(
+                    id=case.id,
+                    category=case.category,
+                    mode=case.mode,
+                    ok=False,
+                    skipped=True,
+                    skip_reason="Failed to create __auto_stack__ session",
+                )
+            )
+            continue
+        meta["session_ids"].append(session_id)
         events, transport_errors = stream_chat(session_id, case.prompt, case.mode)
+        stop_chat_run(session_id)
         issues: list[str] = []
         summary: dict[str, Any] = {
             "model_info": None,
@@ -510,8 +516,28 @@ def run_layer_b(cases: list[PromptCase]) -> tuple[list[LayerBResult], dict[str, 
             if "404" in err and "auto_name" in err.lower():
                 issues.append("404 on auto_name path")
 
+        # Empty/whitespace-only messages are rejected before routing (expected).
+        if case.id == "e01" and any("Message cannot be empty" in e for e in transport_errors):
+            results.append(
+                LayerBResult(
+                    id=case.id,
+                    category=case.category,
+                    mode=case.mode,
+                    ok=True,
+                    events=summary,
+                    errors=transport_errors,
+                    issues=[],
+                )
+            )
+            time.sleep(0.2)
+            continue
+
         # Routing-layer pass: got model_info with a real model before timeout/model-down
         routing_ok = bool(summary["model_info"] and summary["model_info"].get("model"))
+        if not routing_ok and summary.get("has_delta"):
+            issues.append("stream had deltas but no model_info (check session isolation)")
+        if not routing_ok and not summary.get("has_delta") and not transport_errors:
+            issues.append("no model_info and no stream output")
         if case.mode == "agent" and not summary["model_resolved"] and routing_ok:
             # Agent may still be prepping; not a hard fail if model_info present
             pass
