@@ -1,4 +1,4 @@
-# Odysseus-Split-Stack — agent guide
+# Odysseus-local-llm-router — agent guide
 
 Read [README.md](README.md) first.
 
@@ -6,7 +6,7 @@ Read [README.md](README.md) first.
 
 - **This repo:** integration docs, scripts, PR planning.
 - **`odysseus/`:** nested clone — all code changes for upstream PRs.
-- **`../split-stack`:** library only — release/version bumps happen there, not here.
+- **`../local-llm-router`** (or legacy `../split-stack`): routing library — release/version bumps happen there, not here.
 
 Do not mix unrelated Odysseus fixes into Auto stack PRs.
 
@@ -23,7 +23,7 @@ Do not mix unrelated Odysseus fixes into Auto stack PRs.
 2. Link **Part of #3073** (or Fixes when the series is done).
 3. Target **`dev`**, not `main`.
 4. PR4 only: desktop + mobile screenshots from `feature/auto-stack-full`.
-5. See [docs/MAINTAINER-GATES.md](docs/MAINTAINER-GATES.md).
+5. See [docs/maintainer-gates.md](docs/maintainer-gates.md).
 
 ## Local verify
 
