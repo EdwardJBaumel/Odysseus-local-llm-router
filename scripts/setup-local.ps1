@@ -70,12 +70,24 @@ $env:ODYSSEUS_SKIP_ADMIN_PROMPT = "1"
 & $Py -c @"
 from src.constants import AUTO_STACK_MODEL_ID
 from src.settings import load_settings, save_settings
+from services.hwfit.hardware import detect_system
+from src.auto_stack_router import _detect_vram_gb
+import local_llm_router as router
+
 s = load_settings()
 s['default_model'] = AUTO_STACK_MODEL_ID
-s['auto_stack_vram_gb'] = 16
+# 0 = always use Odysseus hwfit detect_system() at route time (same as Cookbook).
+s['auto_stack_vram_gb'] = 0
 s['auto_stack_quant'] = 'qat'
 save_settings(s)
+
+hw = detect_system(fresh=True) or {}
+vram = _detect_vram_gb()
+profile = router.profile_for_vram_gb(vram)
 print('default_model', s['default_model'])
+print('auto_stack_vram_gb=0 (hwfit detect at runtime)')
+print('detected gpu:', hw.get('gpu_name'), 'reported_gb:', hw.get('gpu_vram_gb'))
+print('auto_stack using', vram, 'GB -> profile', profile)
 "@
 
 & $Py (Join-Path $Root "scripts/seed-ollama-endpoint.py")
